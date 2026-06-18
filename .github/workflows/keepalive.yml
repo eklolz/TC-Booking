@@ -1,0 +1,15 @@
+name: Keep Supabase Awake
+
+on:
+  schedule:
+    - cron: "0 3 */5 * *"   
+  workflow_dispatch:         # Able to run it manually from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query the bookings table to keep the project active
+        run: |
+          curl -s "https://ekfuuqztzwfzxgowcyuh.supabase.co/rest/v1/tc_hood_bookings?select=id&limit=1" \
+            -H "apikey: sb_publishable_-AIecV7asgtPmTMdnG4mhQ_HKtLlk0u"

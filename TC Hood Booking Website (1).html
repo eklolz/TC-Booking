@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TC Hood Booking</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg: #F7F6F2;
+    --ink: #20262B;
+    --ink-soft: #5B6560;
+    --steel: #DDE1D8;
+    --steel-dark: #AEB6AC;
+    --card: #FFFFFF;
+
+    --free-tint: #FCE7EC;
+    --free-strong: #D85C7A;
+
+    --mine-tint: #ECD9EE;
+    --mine-strong: #8C4A93;
+
+    --taken-tint: #FBE8C9;
+    --taken-strong: #B97A22;
+
+    --radius: 6px;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Inter', sans-serif;
+  }
+
+  *{ box-sizing: border-box; }
+
+  body{
+    margin:0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app{
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 20px 16px 48px;
+  }
+
+  /* ---- Header "nameplate" ---- */
+  .plate{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    background: var(--card);
+    border: 1px solid var(--steel);
+    border-top: 3px solid var(--ink);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    flex-wrap: wrap;
+  }
+  .plate__kicker{
+    display:block;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    color: var(--ink-soft);
+    margin-bottom: 2px;
+  }
+  .plate__title{
+    margin:0;
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+  .plate__user{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-size: 13px;
+  }
+  .plate__user-label{ color: var(--ink-soft); }
+  .plate__user-name{ font-weight: 600; }
+  .plate__user-missing{ color: var(--ink-soft); font-style: italic; }
+
+  /* ---- Buttons ---- */
+  .btn{
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 4px;
+    border: 1px solid var(--steel-dark);
+    background: var(--card);
+    color: var(--ink);
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease;
+  }
+  .btn:hover{ background: var(--steel); }
+  .btn:focus-visible{ outline: 2px solid var(--ink); outline-offset: 2px; }
+  .btn--ghost{ background: transparent; border-color: transparent; text-decoration: underline; padding: 4px 6px; }
+  .btn--ghost:hover{ background: var(--steel); text-decoration: none; }
+  .btn--icon{ width: 32px; padding: 6px 0; text-align:center; font-size: 16px; line-height:1; }
+  .btn--text{ border-color: transparent; }
+  .btn--primary{ background: var(--ink); color: #fff; border-color: var(--ink); }
+  .btn--primary:hover{ background: #353d41; }
+
+  /* ---- Toolbar ---- */
+  .toolbar{
+    display:flex;
+    align-items:center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 18px 0 12px;
+    flex-wrap: wrap;
+  }
+  .week-nav{ display:flex; align-items:center; gap:8px; }
+  .week-label{
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 500;
+    min-width: 170px;
+    text-align: center;
+  }
+  .legend{ display:flex; gap:14px; flex-wrap: wrap; }
+  .legend__item{
+    display:flex; align-items:center; gap:6px;
+    font-size: 12px; color: var(--ink-soft);
+  }
+  .swatch{ width:11px; height:11px; border-radius: 2px; display:inline-block; }
+  .swatch--free{ background: var(--free-tint); border:1px solid var(--free-strong); }
+  .swatch--mine{ background: var(--mine-tint); border:1px solid var(--mine-strong); }
+  .swatch--taken{ background: var(--taken-tint); border:1px solid var(--taken-strong); }
+
+  /* ---- Set-name banner ---- */
+  .banner{
+    display:flex; align-items:center; justify-content:space-between;
+    gap:12px;
+    background: #FFF7E6;
+    border: 1px solid #E7CE93;
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    font-size: 13px;
+  }
+
+  .config-warning{
+    background: #FDEBEA;
+    border: 1px solid #E7A39C;
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    font-family: var(--mono);
+  }
+
+  /* ---- Grid ---- */
+  .grid-wrap{
+    overflow-x: auto;
+    border: 1px solid var(--steel);
+    border-radius: var(--radius);
+    background: var(--card);
+  }
+  .grid{
+    display: grid;
+    min-width: 760px;
+  }
+  .cell{
+    border-bottom: 1px solid var(--steel);
+    border-right: 1px solid var(--steel);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding: 8px 4px;
+  }
+  .cell--corner{
+    position: sticky;
+    left: 0; top: 0;
+    z-index: 3;
+    background: var(--card);
+  }
+  .cell--day{
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--card);
+    flex-direction: column;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.3;
+    padding: 10px 4px;
+  }
+  .cell--day strong{ font-size: 13px; }
+  .cell--time{
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--card);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+
+  .slot{
+    width: 100%;
+    height: 100%;
+    min-height: 44px;
+    border: none;
+    background: var(--free-tint);
+    border-radius: 3px;
+    margin: 3px;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--free-strong);
+    cursor: pointer;
+    transition: transform 120ms ease, background-color 120ms ease;
+  }
+  .slot:hover{ background: #F8C6D2; transform: translateY(-1px); }
+  .slot:focus-visible{ outline: 2px solid var(--ink); outline-offset: 1px; }
+
+  .slot--mine{ background: var(--mine-tint); color: var(--mine-strong); }
+  .slot--mine:hover{ background: #DCB9E0; }
+
+  .slot--taken{ background: var(--taken-tint); color: var(--taken-strong); cursor: default; }
+  .slot--taken:hover{ background: var(--taken-tint); transform: none; }
+
+  .slot__name{
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 4px;
+  }
+
+  .footnote{
+    margin-top: 14px;
+    font-size: 12px;
+    color: var(--ink-soft);
+  }
+
+  .skeleton{
+    padding: 40px 0;
+    text-align: center;
+    color: var(--ink-soft);
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+
+  .toast{
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    background: var(--ink);
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    z-index: 10;
+    max-width: 90vw;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .slot, .btn{ transition: none; }
+  }
+
+  @media (max-width: 560px){
+    .plate{ padding: 12px 14px; }
+    .plate__title{ font-size: 17px; }
+    .toolbar{ justify-content: center; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <header class="plate">
+    <div>
+      <span class="plate__kicker">FGM LAB · SHARED RESOURCE</span>
+      <h1 class="plate__title">TC Hood Booking</h1>
+    </div>
+    <div class="plate__user" id="userBlock"></div>
+  </header>
+
+  <div id="configWarning"></div>
+  <div id="bannerSlot"></div>
+
+  <div class="toolbar">
+    <div class="week-nav">
+      <button class="btn btn--icon" id="prevWeek" aria-label="Previous week">‹</button>
+      <div class="week-label" id="weekLabel">—</div>
+      <button class="btn btn--icon" id="nextWeek" aria-label="Next week">›</button>
+      <button class="btn btn--text" id="thisWeek">Today</button>
+    </div>
+    <div class="legend">
+      <span class="legend__item"><span class="swatch swatch--free"></span>Available</span>
+      <span class="legend__item"><span class="swatch swatch--mine"></span>Yours</span>
+      <span class="legend__item"><span class="swatch swatch--taken"></span>Booked</span>
+    </div>
+  </div>
+
+  <div class="grid-wrap" id="gridWrap">
+    <div class="skeleton">Loading schedule…</div>
+  </div>
+
+  <p class="footnote">One booking per slot. Click an open slot to claim it, or click your own booking to release it. Names are self-reported — please keep it accurate so others know who to ask.</p>
+
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(function(){
+
+  // =====================================================================
+  // CONFIG — fill these in from your Supabase project (Settings → API)
+  // =====================================================================
+  const SUPABASE_URL = 'https://ekfuuqztzwfzxgowcyuh.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_-AIecV7asgtPmTMdnG4mhQ_HKtLlk0u';
+  // =====================================================================
+
+  const isConfigured = !SUPABASE_URL.includes('YOUR_') && !SUPABASE_ANON_KEY.includes('YOUR_');
+  const supabase = isConfigured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+  const HOURS = Array.from({length: 12}, (_, i) => i + 8); // 08:00 .. 19:00 start times
+  const DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const TABLE = 'tc_hood_bookings';
+
+  const state = {
+    weekStart: startOfWeek(new Date()),
+    bookings: {},
+    username: localStorage.getItem('tc-hood-username') || null,
+    loading: true
+  };
+
+  // ---------- date helpers ----------
+  function startOfWeek(d){
+    const date = new Date(d);
+    const day = date.getDay();
+    const diff = (day === 0 ? -6 : 1 - day);
+    date.setDate(date.getDate() + diff);
+    date.setHours(0,0,0,0);
+    return date;
+  }
+  function addDays(d, n){ const r = new Date(d); r.setDate(r.getDate() + n); return r; }
+  function fmtKeyDate(d){
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  }
+  function hourLabel(h){
+    const a = String(h).padStart(2,'0') + ':00';
+    const b = String(h+1).padStart(2,'0') + ':00';
+    return `${a}–${b}`;
+  }
+  function weekRangeLabel(start){
+    const end = addDays(start, 6);
+    const opts = { day:'numeric', month:'short' };
+    const sameMonth = start.getMonth() === end.getMonth();
+    const startStr = start.toLocaleDateString('en-GB', sameMonth ? {day:'numeric'} : opts);
+    const endStr = end.toLocaleDateString('en-GB', opts);
+    return `${startStr} – ${endStr} ${end.getFullYear()}`;
+  }
+  function weekKey(){ return fmtKeyDate(state.weekStart); }
+
+  // ---------- data layer (Supabase) ----------
+  async function loadBookings(weekStartStr){
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select('day_index, hour, name, booked_at')
+      .eq('week_start', weekStartStr);
+    if(error){ console.error(error); showToast('Could not load the schedule.'); return {}; }
+    const map = {};
+    data.forEach(row => { map[`${row.day_index}_${row.hour}`] = { name: row.name, bookedAt: row.booked_at }; });
+    return map;
+  }
+
+  async function bookSlot(weekStartStr, day, hour, name){
+    const { error } = await supabase.from(TABLE).insert({
+      week_start: weekStartStr, day_index: day, hour, name
+    });
+    if(error){
+      if(error.code === '23505') return { ok:false, reason:'taken' }; // unique constraint hit
+      console.error(error);
+      return { ok:false, reason:'error' };
+    }
+    return { ok:true };
+  }
+
+  async function cancelSlot(weekStartStr, day, hour, name){
+    const { error } = await supabase.from(TABLE).delete()
+      .eq('week_start', weekStartStr).eq('day_index', day).eq('hour', hour).eq('name', name);
+    if(error){ console.error(error); return false; }
+    return true;
+  }
+
+  // ---------- toast ----------
+  let toastTimer = null;
+  function showToast(msg){
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
+  }
+
+  // ---------- rendering ----------
+  function renderConfigWarning(){
+    const el = document.getElementById('configWarning');
+    if(!isConfigured){
+      el.innerHTML = `<div class="config-warning">Set SUPABASE_URL and SUPABASE_ANON_KEY near the top of the &lt;script&gt; tag before this will work.</div>`;
+    } else {
+      el.innerHTML = '';
+    }
+  }
+
+  function renderUserBlock(){
+    const el = document.getElementById('userBlock');
+    if(state.username){
+      el.innerHTML = `
+        <span class="plate__user-label">Booking as</span>
+        <span class="plate__user-name">${escapeHtml(state.username)}</span>
+        <button class="btn btn--ghost" id="changeNameBtn">change</button>
+      `;
+    }else{
+      el.innerHTML = `
+        <span class="plate__user-missing">No name set</span>
+        <button class="btn btn--ghost" id="changeNameBtn">set name</button>
+      `;
+    }
+    document.getElementById('changeNameBtn').addEventListener('click', onChangeName);
+  }
+
+  function renderBanner(){
+    const slot = document.getElementById('bannerSlot');
+    if(!state.username){
+      slot.innerHTML = `
+        <div class="banner">
+          <span>Set your name to claim or release slots on this hood.</span>
+          <button class="btn btn--primary" id="bannerSetName">Set name</button>
+        </div>`;
+      document.getElementById('bannerSetName').addEventListener('click', onChangeName);
+    }else{
+      slot.innerHTML = '';
+    }
+  }
+
+  function renderWeekLabel(){
+    document.getElementById('weekLabel').textContent = weekRangeLabel(state.weekStart);
+  }
+
+  function renderGrid(){
+    const wrap = document.getElementById('gridWrap');
+    if(state.loading){
+      wrap.innerHTML = '<div class="skeleton">Loading schedule…</div>';
+      return;
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    grid.style.gridTemplateColumns = '80px repeat(7, 1fr)';
+
+    const corner = document.createElement('div');
+    corner.className = 'cell cell--corner';
+    grid.appendChild(corner);
+
+    for(let d = 0; d < 7; d++){
+      const date = addDays(state.weekStart, d);
+      const cell = document.createElement('div');
+      cell.className = 'cell cell--day';
+      cell.innerHTML = `<strong>${DAY_NAMES[d]}</strong><span>${date.getDate()} ${date.toLocaleDateString('en-GB',{month:'short'})}</span>`;
+      grid.appendChild(cell);
+    }
+
+    HOURS.forEach(hour => {
+      const timeCell = document.createElement('div');
+      timeCell.className = 'cell cell--time';
+      timeCell.textContent = hourLabel(hour);
+      grid.appendChild(timeCell);
+
+      for(let d = 0; d < 7; d++){
+        const key = `${d}_${hour}`;
+        const entry = state.bookings[key];
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.dataset.day = d;
+        btn.dataset.hour = hour;
+
+        if(!entry){
+          btn.className = 'slot';
+          btn.innerHTML = '<span class="slot__name">+</span>';
+          btn.title = 'Available — click to book';
+        } else if(entry.name === state.username){
+          btn.className = 'slot slot--mine';
+          btn.innerHTML = `<span class="slot__name">${escapeHtml(entry.name)}</span>`;
+          btn.title = 'Your booking — click to release';
+        } else {
+          btn.className = 'slot slot--taken';
+          btn.innerHTML = `<span class="slot__name">${escapeHtml(entry.name)}</span>`;
+          btn.title = `Booked by ${entry.name}`;
+        }
+
+        cell.appendChild(btn);
+        grid.appendChild(cell);
+      }
+    });
+
+    wrap.innerHTML = '';
+    wrap.appendChild(grid);
+    wrap.addEventListener('click', onSlotClick);
+  }
+
+  function renderAll(){
+    renderConfigWarning();
+    renderUserBlock();
+    renderBanner();
+    renderWeekLabel();
+    renderGrid();
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // ---------- actions ----------
+  function onChangeName(){
+    const proposed = window.prompt('Your name (shown to lab mates on the schedule):', state.username || '');
+    if(proposed === null) return;
+    const trimmed = proposed.trim();
+    if(!trimmed) return;
+    state.username = trimmed;
+    localStorage.setItem('tc-hood-username', trimmed);
+    renderAll();
+  }
+
+  async function onSlotClick(e){
+    if(!isConfigured){ showToast('Add your Supabase URL and key first.'); return; }
+    const btn = e.target.closest('.slot');
+    if(!btn) return;
+    const day = Number(btn.dataset.day);
+    const hour = Number(btn.dataset.hour);
+    const key = `${day}_${hour}`;
+    const entry = state.bookings[key];
+    const label = `${DAY_NAMES[day]} ${hourLabel(hour)}`;
+
+    if(!entry){
+      if(!state.username){ showToast('Set your name first to book a slot.'); return; }
+      const result = await bookSlot(weekKey(), day, hour, state.username);
+      if(result.ok){
+        state.bookings[key] = { name: state.username, bookedAt: new Date().toISOString() };
+        renderGrid();
+        showToast(`Booked ${label}.`);
+      } else if(result.reason === 'taken'){
+        showToast('Someone just booked this slot — refreshing.');
+        state.bookings = await loadBookings(weekKey());
+        renderGrid();
+      } else {
+        showToast('Booking failed — try again.');
+      }
+    } else if(entry.name === state.username){
+      const sure = window.confirm(`Release your booking for ${label}?`);
+      if(!sure) return;
+      const ok = await cancelSlot(weekKey(), day, hour, state.username);
+      if(ok){
+        delete state.bookings[key];
+        renderGrid();
+        showToast('Booking released.');
+      } else {
+        showToast('Could not update the schedule — try refreshing.');
+      }
+    } else {
+      showToast(`Booked by ${entry.name}.`);
+    }
+  }
+
+  async function goToWeek(newStart){
+    state.weekStart = newStart;
+    state.loading = true;
+    renderWeekLabel();
+    renderGrid();
+    state.bookings = isConfigured ? await loadBookings(weekKey()) : {};
+    state.loading = false;
+    renderGrid();
+  }
+
+  async function refreshCurrentWeek(){
+    if(!isConfigured || state.loading) return;
+    state.bookings = await loadBookings(weekKey());
+    renderGrid();
+  }
+
+  // ---------- wire up ----------
+  document.getElementById('prevWeek').addEventListener('click', () => goToWeek(addDays(state.weekStart, -7)));
+  document.getElementById('nextWeek').addEventListener('click', () => goToWeek(addDays(state.weekStart, 7)));
+  document.getElementById('thisWeek').addEventListener('click', () => goToWeek(startOfWeek(new Date())));
+
+  (async function init(){
+    renderConfigWarning();
+    renderUserBlock();
+    renderBanner();
+    renderWeekLabel();
+    state.bookings = isConfigured ? await loadBookings(weekKey()) : {};
+    state.loading = false;
+    renderGrid();
+
+    if(isConfigured){
+      setInterval(refreshCurrentWeek, 15000); // light polling for other people's changes
+    }
+  })();
+})();
+</script>
+
+</body>
+</html>

@@ -107,6 +107,30 @@
   .btn--primary{ background: var(--ink); color: #fff; border-color: var(--ink); }
   .btn--primary:hover{ background: #353d41; }
 
+  /* ---- Hood tabs ---- */
+  .hood-tabs{
+    display:flex;
+    gap:6px;
+    margin-bottom: 12px;
+  }
+  .hood-tab{
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 4px;
+    border: 1px solid var(--steel-dark);
+    background: var(--card);
+    color: var(--ink-soft);
+    padding: 6px 14px;
+    cursor: pointer;
+  }
+  .hood-tab:hover{ background: var(--steel); }
+  .hood-tab--active{
+    background: var(--ink);
+    color: #fff;
+    border-color: var(--ink);
+  }
+
   /* ---- Toolbar ---- */
   .toolbar{
     display:flex;
@@ -264,6 +288,60 @@
     max-width: 90vw;
   }
 
+  /* ---- Mobile day-list view ---- */
+  .day-view{ display:none; }
+  .day-nav{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    margin-bottom: 10px;
+  }
+  .day-nav__label{
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 600;
+    text-align:center;
+    flex:1;
+  }
+  .day-list{
+    border: 1px solid var(--steel);
+    border-radius: var(--radius);
+    background: var(--card);
+    overflow: hidden;
+  }
+  .day-row{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    border-bottom: 1px solid var(--steel);
+    padding: 10px 12px;
+  }
+  .day-row:last-child{ border-bottom: none; }
+  .day-row__time{
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-soft);
+    width: 92px;
+    flex-shrink: 0;
+  }
+  .day-row__slot{
+    flex:1;
+    min-height: 44px;
+    border: none;
+    border-radius: 4px;
+    background: var(--free-tint);
+    color: var(--free-strong);
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 10px 12px;
+    text-align: left;
+  }
+  .day-row__slot--mine{ background: var(--mine-tint); color: var(--mine-strong); }
+  .day-row__slot--taken{ background: var(--taken-tint); color: var(--taken-strong); cursor: default; }
+
   @media (prefers-reduced-motion: reduce){
     .slot, .btn{ transition: none; }
   }
@@ -272,6 +350,12 @@
     .plate{ padding: 12px 14px; }
     .plate__title{ font-size: 17px; }
     .toolbar{ justify-content: center; }
+  }
+
+  @media (max-width: 640px){
+    .grid-wrap{ display:none; }
+    .day-view{ display:block; }
+    .toolbar .week-nav{ display:none; }
   }
 </style>
 </head>
@@ -289,6 +373,8 @@
 
   <div id="configWarning"></div>
   <div id="bannerSlot"></div>
+
+  <div class="hood-tabs" id="hoodTabs"></div>
 
   <div class="toolbar">
     <div class="week-nav">
@@ -308,7 +394,18 @@
     <div class="skeleton">Loading schedule…</div>
   </div>
 
-  <p class="footnote">One booking per slot. Click an open slot to claim it, or click your own booking to release it. Names are self-reported — please keep it accurate so others know who to ask.</p>
+  <div class="day-view" id="dayView">
+    <div class="day-nav">
+      <button class="btn btn--icon" id="prevDay" aria-label="Previous day">‹</button>
+      <div class="day-nav__label" id="dayNavLabel">—</div>
+      <button class="btn btn--icon" id="nextDay" aria-label="Next day">›</button>
+    </div>
+    <div class="day-list" id="dayListWrap">
+      <div class="skeleton">Loading schedule…</div>
+    </div>
+  </div>
+
+  <p class="footnote">One booking per slot. Tap an open slot to claim it, or tap your own booking to release it. Names are self-reported — please keep it accurate so others know who to ask.</p>
 
 </div>
 
@@ -324,6 +421,13 @@
   const SUPABASE_ANON_KEY = 'sb_publishable_-AIecV7asgtPmTMdnG4mhQ_HKtLlk0u';
   // =====================================================================
 
+  // Which hoods are available to book. Add or rename entries here when
+  // a new hood arrives — nothing else in the code needs to change.
+  const HOODS = [
+    { id: 'hood-1', label: 'Hood 1' },
+    { id: 'hood-2', label: 'iPSC Hood' }
+  ];
+
   const isConfigured = !SUPABASE_URL.includes('YOUR_') && !SUPABASE_ANON_KEY.includes('YOUR_');
   const supabase = isConfigured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
@@ -335,6 +439,8 @@
     weekStart: startOfWeek(new Date()),
     bookings: {},
     username: localStorage.getItem('tc-hood-username') || null,
+    currentHood: localStorage.getItem('tc-hood-current') || HOODS[0].id,
+    currentDayIndex: todayDayIndex(),
     loading: true
   };
 
@@ -368,22 +474,27 @@
     return `${startStr} – ${endStr} ${end.getFullYear()}`;
   }
   function weekKey(){ return fmtKeyDate(state.weekStart); }
+  function todayDayIndex(){
+    const day = new Date().getDay();
+    return day === 0 ? 6 : day - 1; // convert Sun(0)..Sat(6) to Mon(0)..Sun(6)
+  }
 
   // ---------- data layer (Supabase) ----------
-  async function loadBookings(weekStartStr){
+  async function loadBookings(weekStartStr, hood){
     const { data, error } = await supabase
       .from(TABLE)
       .select('day_index, hour, name, booked_at')
-      .eq('week_start', weekStartStr);
+      .eq('week_start', weekStartStr)
+      .eq('hood', hood);
     if(error){ console.error(error); showToast('Could not load the schedule.'); return {}; }
     const map = {};
     data.forEach(row => { map[`${row.day_index}_${row.hour}`] = { name: row.name, bookedAt: row.booked_at }; });
     return map;
   }
 
-  async function bookSlot(weekStartStr, day, hour, name){
+  async function bookSlot(weekStartStr, hood, day, hour, name){
     const { error } = await supabase.from(TABLE).insert({
-      week_start: weekStartStr, day_index: day, hour, name
+      week_start: weekStartStr, hood, day_index: day, hour, name
     });
     if(error){
       if(error.code === '23505') return { ok:false, reason:'taken' }; // unique constraint hit
@@ -393,9 +504,9 @@
     return { ok:true };
   }
 
-  async function cancelSlot(weekStartStr, day, hour, name){
+  async function cancelSlot(weekStartStr, hood, day, hour, name){
     const { error } = await supabase.from(TABLE).delete()
-      .eq('week_start', weekStartStr).eq('day_index', day).eq('hour', hour).eq('name', name);
+      .eq('week_start', weekStartStr).eq('hood', hood).eq('day_index', day).eq('hour', hour).eq('name', name);
     if(error){ console.error(error); return false; }
     return true;
   }
@@ -435,6 +546,16 @@
       `;
     }
     document.getElementById('changeNameBtn').addEventListener('click', onChangeName);
+  }
+
+  function renderHoodTabs(){
+    const el = document.getElementById('hoodTabs');
+    el.innerHTML = HOODS.map(h =>
+      `<button class="hood-tab ${h.id === state.currentHood ? 'hood-tab--active' : ''}" data-hood="${h.id}">${escapeHtml(h.label)}</button>`
+    ).join('');
+    el.querySelectorAll('.hood-tab').forEach(btn => {
+      btn.addEventListener('click', () => onHoodSwitch(btn.dataset.hood));
+    });
   }
 
   function renderBanner(){
@@ -519,12 +640,75 @@
     wrap.addEventListener('click', onSlotClick);
   }
 
+
+  function renderDayList(){
+    const labelEl = document.getElementById('dayNavLabel');
+    const date = addDays(state.weekStart, state.currentDayIndex);
+    labelEl.textContent = `${DAY_NAMES[state.currentDayIndex]} ${date.getDate()} ${date.toLocaleDateString('en-GB',{month:'short'})}`;
+
+    const wrap = document.getElementById('dayListWrap');
+    if(state.loading){
+      wrap.innerHTML = '<div class="skeleton">Loading schedule…</div>';
+      return;
+    }
+
+    wrap.innerHTML = '';
+    HOURS.forEach(hour => {
+      const key = `${state.currentDayIndex}_${hour}`;
+      const entry = state.bookings[key];
+
+      const row = document.createElement('div');
+      row.className = 'day-row';
+
+      const time = document.createElement('div');
+      time.className = 'day-row__time';
+      time.textContent = hourLabel(hour);
+      row.appendChild(time);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.day = state.currentDayIndex;
+      btn.dataset.hour = hour;
+
+      if(!entry){
+        btn.className = 'day-row__slot';
+        btn.textContent = 'Available';
+      } else if(entry.name === state.username){
+        btn.className = 'day-row__slot day-row__slot--mine';
+        btn.textContent = `${entry.name} (yours)`;
+      } else {
+        btn.className = 'day-row__slot day-row__slot--taken';
+        btn.textContent = entry.name;
+      }
+
+      row.appendChild(btn);
+      wrap.appendChild(row);
+    });
+  }
+
+  async function goToDay(newIndex, newWeekStart){
+    if(newWeekStart){
+      state.weekStart = newWeekStart;
+      state.loading = true;
+      renderWeekLabel();
+      renderGrid();
+      renderDayList();
+      state.bookings = isConfigured ? await loadBookings(weekKey(), state.currentHood) : {};
+      state.loading = false;
+    }
+    state.currentDayIndex = newIndex;
+    renderGrid();
+    renderDayList();
+  }
+
   function renderAll(){
     renderConfigWarning();
     renderUserBlock();
+    renderHoodTabs();
     renderBanner();
     renderWeekLabel();
     renderGrid();
+    renderDayList();
   }
 
   function escapeHtml(s){
@@ -542,9 +726,23 @@
     renderAll();
   }
 
+  async function onHoodSwitch(hoodId){
+    if(hoodId === state.currentHood) return;
+    state.currentHood = hoodId;
+    localStorage.setItem('tc-hood-current', hoodId);
+    renderHoodTabs();
+    state.loading = true;
+    renderGrid();
+    renderDayList();
+    state.bookings = isConfigured ? await loadBookings(weekKey(), state.currentHood) : {};
+    state.loading = false;
+    renderGrid();
+    renderDayList();
+  }
+
   async function onSlotClick(e){
     if(!isConfigured){ showToast('Add your Supabase URL and key first.'); return; }
-    const btn = e.target.closest('.slot');
+    const btn = e.target.closest('.slot, .day-row__slot');
     if(!btn) return;
     const day = Number(btn.dataset.day);
     const hour = Number(btn.dataset.hour);
@@ -554,25 +752,28 @@
 
     if(!entry){
       if(!state.username){ showToast('Set your name first to book a slot.'); return; }
-      const result = await bookSlot(weekKey(), day, hour, state.username);
+      const result = await bookSlot(weekKey(), state.currentHood, day, hour, state.username);
       if(result.ok){
         state.bookings[key] = { name: state.username, bookedAt: new Date().toISOString() };
         renderGrid();
+        renderDayList();
         showToast(`Booked ${label}.`);
       } else if(result.reason === 'taken'){
         showToast('Someone just booked this slot — refreshing.');
-        state.bookings = await loadBookings(weekKey());
+        state.bookings = await loadBookings(weekKey(), state.currentHood);
         renderGrid();
+        renderDayList();
       } else {
         showToast('Booking failed — try again.');
       }
     } else if(entry.name === state.username){
       const sure = window.confirm(`Release your booking for ${label}?`);
       if(!sure) return;
-      const ok = await cancelSlot(weekKey(), day, hour, state.username);
+      const ok = await cancelSlot(weekKey(), state.currentHood, day, hour, state.username);
       if(ok){
         delete state.bookings[key];
         renderGrid();
+        renderDayList();
         showToast('Booking released.');
       } else {
         showToast('Could not update the schedule — try refreshing.');
@@ -587,30 +788,54 @@
     state.loading = true;
     renderWeekLabel();
     renderGrid();
-    state.bookings = isConfigured ? await loadBookings(weekKey()) : {};
+    renderDayList();
+    state.bookings = isConfigured ? await loadBookings(weekKey(), state.currentHood) : {};
     state.loading = false;
     renderGrid();
+    renderDayList();
   }
 
   async function refreshCurrentWeek(){
     if(!isConfigured || state.loading) return;
-    state.bookings = await loadBookings(weekKey());
+    state.bookings = await loadBookings(weekKey(), state.currentHood);
     renderGrid();
+    renderDayList();
+  }
+
+  // Move the day-list forward/back one day at a time, crossing into the
+  // adjacent week (and reloading bookings) when stepping past Mon or Sun.
+  async function stepDay(delta){
+    let newIndex = state.currentDayIndex + delta;
+    if(newIndex < 0){
+      await goToWeek(addDays(state.weekStart, -7));
+      state.currentDayIndex = 6;
+    } else if(newIndex > 6){
+      await goToWeek(addDays(state.weekStart, 7));
+      state.currentDayIndex = 0;
+    } else {
+      state.currentDayIndex = newIndex;
+    }
+    renderDayList();
   }
 
   // ---------- wire up ----------
   document.getElementById('prevWeek').addEventListener('click', () => goToWeek(addDays(state.weekStart, -7)));
   document.getElementById('nextWeek').addEventListener('click', () => goToWeek(addDays(state.weekStart, 7)));
   document.getElementById('thisWeek').addEventListener('click', () => goToWeek(startOfWeek(new Date())));
+  document.getElementById('prevDay').addEventListener('click', () => stepDay(-1));
+  document.getElementById('nextDay').addEventListener('click', () => stepDay(1));
+  document.getElementById('dayListWrap').addEventListener('click', onSlotClick);
 
   (async function init(){
     renderConfigWarning();
     renderUserBlock();
+    renderHoodTabs();
     renderBanner();
     renderWeekLabel();
-    state.bookings = isConfigured ? await loadBookings(weekKey()) : {};
+    state.bookings = isConfigured ? await loadBookings(weekKey(), state.currentHood) : {};
     state.loading = false;
     renderGrid();
+    renderDayList();
 
     if(isConfigured){
       setInterval(refreshCurrentWeek, 15000); // light polling for other people's changes

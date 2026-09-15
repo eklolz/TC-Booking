@@ -186,8 +186,6 @@
     border: 1px solid var(--steel);
     border-radius: var(--radius);
     background: var(--card);
-    -webkit-user-select: none;
-    user-select: none;
   }
   .grid{
     display: grid;
@@ -225,21 +223,19 @@
     z-index: 1;
     background: var(--card);
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: 12px;
     color: var(--ink-soft);
     white-space: nowrap;
   }
-  /* lighter divider on the half-hour so hour boundaries stay readable */
-  .cell--half{ border-bottom-color: #EEF0EA; }
 
   .slot{
     width: 100%;
     height: 100%;
-    min-height: 34px;
+    min-height: 44px;
     border: none;
     background: var(--free-tint);
     border-radius: 3px;
-    margin: 2px 3px;
+    margin: 3px;
     font-family: var(--sans);
     font-size: 12px;
     font-weight: 600;
@@ -255,9 +251,6 @@
 
   .slot--taken{ background: var(--taken-tint); color: var(--taken-strong); cursor: default; }
   .slot--taken:hover{ background: var(--taken-tint); transform: none; }
-
-  /* range-drag highlight for open slots being swept over */
-  .slot--selecting{ background: #F3B7C6; transform: none; box-shadow: inset 0 0 0 2px var(--free-strong); }
 
   .slot__name{
     max-width: 100%;
@@ -322,19 +315,19 @@
     align-items:center;
     gap:12px;
     border-bottom: 1px solid var(--steel);
-    padding: 8px 12px;
+    padding: 10px 12px;
   }
   .day-row:last-child{ border-bottom: none; }
   .day-row__time{
     font-family: var(--mono);
     font-size: 12px;
     color: var(--ink-soft);
-    width: 104px;
+    width: 92px;
     flex-shrink: 0;
   }
   .day-row__slot{
     flex:1;
-    min-height: 40px;
+    min-height: 44px;
     border: none;
     border-radius: 4px;
     background: var(--free-tint);
@@ -343,7 +336,7 @@
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
-    padding: 9px 12px;
+    padding: 10px 12px;
     text-align: left;
   }
   .day-row__slot--mine{ background: var(--mine-tint); color: var(--mine-strong); }
@@ -412,7 +405,7 @@
     </div>
   </div>
 
-  <p class="footnote">Slots are 30 minutes. On desktop, drag across open slots in a day to book a block at once. Tap a single open slot to claim it, or tap your own booking to release it. Names are self-reported — please keep it accurate so others know who to ask.</p>
+  <p class="footnote">One booking per slot. Tap an open slot to claim it, or tap your own booking to release it. Names are self-reported — please keep it accurate so others know who to ask.</p>
 
 </div>
 
@@ -438,10 +431,7 @@
   const isConfigured = !SUPABASE_URL.includes('YOUR_') && !SUPABASE_ANON_KEY.includes('YOUR_');
   const supabase = isConfigured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
-  // 30-minute slots. slot_index 0 = 08:00, 1 = 08:30, ... 23 = 19:30.
-  const START_HOUR = 8;
-  const SLOT_COUNT = 24; // 12 hours * 2
-  const SLOTS = Array.from({length: SLOT_COUNT}, (_, i) => i);
+  const HOURS = Array.from({length: 12}, (_, i) => i + 8); // 08:00 .. 19:00 start times
   const DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const TABLE = 'tc_hood_bookings';
 
@@ -453,9 +443,6 @@
     currentDayIndex: todayDayIndex(),
     loading: true
   };
-
-  // transient drag state (desktop grid only)
-  const drag = { active:false, day:null, startSlot:null, endSlot:null };
 
   // ---------- date helpers ----------
   function startOfWeek(d){
@@ -473,14 +460,10 @@
     const day = String(d.getDate()).padStart(2,'0');
     return `${y}-${m}-${day}`;
   }
-  // slot_index -> "HH:MM"
-  function slotTime(idx){
-    const h = START_HOUR + Math.floor(idx / 2);
-    const m = (idx % 2) === 0 ? '00' : '30';
-    return `${String(h).padStart(2,'0')}:${m}`;
-  }
-  function slotLabel(idx){
-    return `${slotTime(idx)}–${slotTime(idx + 1)}`;
+  function hourLabel(h){
+    const a = String(h).padStart(2,'0') + ':00';
+    const b = String(h+1).padStart(2,'0') + ':00';
+    return `${a}–${b}`;
   }
   function weekRangeLabel(start){
     const end = addDays(start, 6);
@@ -500,19 +483,18 @@
   async function loadBookings(weekStartStr, hood){
     const { data, error } = await supabase
       .from(TABLE)
-      .select('day_index, slot_index, name, booked_at')
+      .select('day_index, hour, name, booked_at')
       .eq('week_start', weekStartStr)
       .eq('hood', hood);
     if(error){ console.error(error); showToast('Could not load the schedule.'); return {}; }
     const map = {};
-    data.forEach(row => { map[`${row.day_index}_${row.slot_index}`] = { name: row.name, bookedAt: row.booked_at }; });
+    data.forEach(row => { map[`${row.day_index}_${row.hour}`] = { name: row.name, bookedAt: row.booked_at }; });
     return map;
   }
 
-  // Book one slot. Returns { ok, reason }.
-  async function bookSlot(weekStartStr, hood, day, slot, name){
+  async function bookSlot(weekStartStr, hood, day, hour, name){
     const { error } = await supabase.from(TABLE).insert({
-      week_start: weekStartStr, hood, day_index: day, slot_index: slot, name
+      week_start: weekStartStr, hood, day_index: day, hour, name
     });
     if(error){
       if(error.code === '23505') return { ok:false, reason:'taken' }; // unique constraint hit
@@ -522,34 +504,9 @@
     return { ok:true };
   }
 
-  // Book several slots in the same day at once. Any slots already taken in
-  // the meantime are skipped (unique constraint), the rest go through.
-  async function bookRange(weekStartStr, hood, day, slots, name){
-    const rows = slots.map(slot => ({
-      week_start: weekStartStr, hood, day_index: day, slot_index: slot, name
-    }));
-    const { data, error } = await supabase.from(TABLE).insert(rows).select('slot_index');
-    if(error && error.code !== '23505'){
-      console.error(error);
-      return { booked: [], failed: slots };
-    }
-    // With a partial clash Postgres rejects the whole insert, so fall back to
-    // inserting one at a time to salvage the free slots.
-    if(error && error.code === '23505'){
-      const booked = [];
-      for(const slot of slots){
-        const r = await bookSlot(weekStartStr, hood, day, slot, name);
-        if(r.ok) booked.push(slot);
-      }
-      return { booked, failed: slots.filter(s => !booked.includes(s)) };
-    }
-    const booked = (data || []).map(r => r.slot_index);
-    return { booked, failed: slots.filter(s => !booked.includes(s)) };
-  }
-
-  async function cancelSlot(weekStartStr, hood, day, slot, name){
+  async function cancelSlot(weekStartStr, hood, day, hour, name){
     const { error } = await supabase.from(TABLE).delete()
-      .eq('week_start', weekStartStr).eq('hood', hood).eq('day_index', day).eq('slot_index', slot).eq('name', name);
+      .eq('week_start', weekStartStr).eq('hood', hood).eq('day_index', day).eq('hour', hour).eq('name', name);
     if(error){ console.error(error); return false; }
     return true;
   }
@@ -619,16 +576,6 @@
     document.getElementById('weekLabel').textContent = weekRangeLabel(state.weekStart);
   }
 
-  // which open slots are currently inside the drag selection?
-  function selectionSet(){
-    if(!drag.active || drag.startSlot === null || drag.endSlot === null) return null;
-    const lo = Math.min(drag.startSlot, drag.endSlot);
-    const hi = Math.max(drag.startSlot, drag.endSlot);
-    const set = new Set();
-    for(let s = lo; s <= hi; s++) set.add(s);
-    return { day: drag.day, set };
-  }
-
   function renderGrid(){
     const wrap = document.getElementById('gridWrap');
     if(state.loading){
@@ -636,11 +583,9 @@
       return;
     }
 
-    const sel = selectionSet();
-
     const grid = document.createElement('div');
     grid.className = 'grid';
-    grid.style.gridTemplateColumns = '92px repeat(7, 1fr)';
+    grid.style.gridTemplateColumns = '80px repeat(7, 1fr)';
 
     const corner = document.createElement('div');
     corner.className = 'cell cell--corner';
@@ -654,29 +599,27 @@
       grid.appendChild(cell);
     }
 
-    SLOTS.forEach(slotIdx => {
-      const isHalf = (slotIdx % 2) === 1;
+    HOURS.forEach(hour => {
       const timeCell = document.createElement('div');
-      timeCell.className = 'cell cell--time' + (isHalf ? ' cell--half' : '');
-      timeCell.textContent = slotLabel(slotIdx);
+      timeCell.className = 'cell cell--time';
+      timeCell.textContent = hourLabel(hour);
       grid.appendChild(timeCell);
 
       for(let d = 0; d < 7; d++){
-        const key = `${d}_${slotIdx}`;
+        const key = `${d}_${hour}`;
         const entry = state.bookings[key];
         const cell = document.createElement('div');
-        cell.className = 'cell' + (isHalf ? ' cell--half' : '');
+        cell.className = 'cell';
 
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.dataset.day = d;
-        btn.dataset.slot = slotIdx;
+        btn.dataset.hour = hour;
 
         if(!entry){
-          const inSel = sel && sel.day === d && sel.set.has(slotIdx);
-          btn.className = 'slot' + (inSel ? ' slot--selecting' : '');
+          btn.className = 'slot';
           btn.innerHTML = '<span class="slot__name">+</span>';
-          btn.title = 'Available — click to book, or drag across a day';
+          btn.title = 'Available — click to book';
         } else if(entry.name === state.username){
           btn.className = 'slot slot--mine';
           btn.innerHTML = `<span class="slot__name">${escapeHtml(entry.name)}</span>`;
@@ -694,7 +637,9 @@
 
     wrap.innerHTML = '';
     wrap.appendChild(grid);
+    wrap.addEventListener('click', onSlotClick);
   }
+
 
   function renderDayList(){
     const labelEl = document.getElementById('dayNavLabel');
@@ -708,8 +653,8 @@
     }
 
     wrap.innerHTML = '';
-    SLOTS.forEach(slotIdx => {
-      const key = `${state.currentDayIndex}_${slotIdx}`;
+    HOURS.forEach(hour => {
+      const key = `${state.currentDayIndex}_${hour}`;
       const entry = state.bookings[key];
 
       const row = document.createElement('div');
@@ -717,13 +662,13 @@
 
       const time = document.createElement('div');
       time.className = 'day-row__time';
-      time.textContent = slotLabel(slotIdx);
+      time.textContent = hourLabel(hour);
       row.appendChild(time);
 
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.dataset.day = state.currentDayIndex;
-      btn.dataset.slot = slotIdx;
+      btn.dataset.hour = hour;
 
       if(!entry){
         btn.className = 'day-row__slot';
@@ -739,6 +684,21 @@
       row.appendChild(btn);
       wrap.appendChild(row);
     });
+  }
+
+  async function goToDay(newIndex, newWeekStart){
+    if(newWeekStart){
+      state.weekStart = newWeekStart;
+      state.loading = true;
+      renderWeekLabel();
+      renderGrid();
+      renderDayList();
+      state.bookings = isConfigured ? await loadBookings(weekKey(), state.currentHood) : {};
+      state.loading = false;
+    }
+    state.currentDayIndex = newIndex;
+    renderGrid();
+    renderDayList();
   }
 
   function renderAll(){
@@ -780,18 +740,19 @@
     renderDayList();
   }
 
-  // ---- single tap/click on a slot (used by both views) ----
-  async function handleSlotActivate(btn){
+  async function onSlotClick(e){
     if(!isConfigured){ showToast('Add your Supabase URL and key first.'); return; }
+    const btn = e.target.closest('.slot, .day-row__slot');
+    if(!btn) return;
     const day = Number(btn.dataset.day);
-    const slot = Number(btn.dataset.slot);
-    const key = `${day}_${slot}`;
+    const hour = Number(btn.dataset.hour);
+    const key = `${day}_${hour}`;
     const entry = state.bookings[key];
-    const label = `${DAY_NAMES[day]} ${slotLabel(slot)}`;
+    const label = `${DAY_NAMES[day]} ${hourLabel(hour)}`;
 
     if(!entry){
       if(!state.username){ showToast('Set your name first to book a slot.'); return; }
-      const result = await bookSlot(weekKey(), state.currentHood, day, slot, state.username);
+      const result = await bookSlot(weekKey(), state.currentHood, day, hour, state.username);
       if(result.ok){
         state.bookings[key] = { name: state.username, bookedAt: new Date().toISOString() };
         renderGrid();
@@ -808,7 +769,7 @@
     } else if(entry.name === state.username){
       const sure = window.confirm(`Release your booking for ${label}?`);
       if(!sure) return;
-      const ok = await cancelSlot(weekKey(), state.currentHood, day, slot, state.username);
+      const ok = await cancelSlot(weekKey(), state.currentHood, day, hour, state.username);
       if(ok){
         delete state.bookings[key];
         renderGrid();
@@ -819,100 +780,6 @@
       }
     } else {
       showToast(`Booked by ${entry.name}.`);
-    }
-  }
-
-  // ---- drag-to-book on the desktop grid ----
-  function slotButtonFrom(target){
-    const btn = target.closest('.slot');
-    if(!btn) return null;
-    // only open slots take part in a drag
-    if(btn.classList.contains('slot--taken') || btn.classList.contains('slot--mine')) return null;
-    return btn;
-  }
-
-  function onGridPointerDown(e){
-    if(e.button !== undefined && e.button !== 0) return; // left button only
-    const btn = e.target.closest('.slot');
-    if(!btn) return;
-    // taken / mine slots: let it act as a normal click (handled on pointerup)
-    if(btn.classList.contains('slot--taken') || btn.classList.contains('slot--mine')){
-      drag.active = false;
-      return;
-    }
-    drag.active = true;
-    drag.day = Number(btn.dataset.day);
-    drag.startSlot = Number(btn.dataset.slot);
-    drag.endSlot = drag.startSlot;
-    renderGrid();
-  }
-
-  function onGridPointerOver(e){
-    if(!drag.active) return;
-    const btn = e.target.closest('.slot');
-    if(!btn) return;
-    if(Number(btn.dataset.day) !== drag.day) return; // stay within the start day
-    drag.endSlot = Number(btn.dataset.slot);
-    renderGrid();
-  }
-
-  async function onGridPointerUp(e){
-    const btn = e.target.closest('.slot, .day-row__slot');
-
-    // Not a drag: treat as a plain click.
-    if(!drag.active){
-      if(btn) handleSlotActivate(btn);
-      return;
-    }
-
-    const sel = selectionSet();
-    const day = drag.day;
-    // reset drag state before any await so re-renders are clean
-    drag.active = false; drag.day = null; drag.startSlot = null; drag.endSlot = null;
-
-    if(!sel || sel.set.size === 0){ renderGrid(); return; }
-
-    const slots = [...sel.set].sort((a,b) => a-b);
-
-    // single-slot "drag" == a click
-    if(slots.length === 1){
-      renderGrid();
-      const singleBtn = document.querySelector(`.slot[data-day="${day}"][data-slot="${slots[0]}"]`);
-      if(singleBtn) handleSlotActivate(singleBtn);
-      return;
-    }
-
-    if(!isConfigured){ showToast('Add your Supabase URL and key first.'); renderGrid(); return; }
-    if(!state.username){ showToast('Set your name first to book slots.'); renderGrid(); return; }
-
-    const first = slotTime(slots[0]);
-    const last = slotTime(slots[slots.length - 1] + 1);
-    showToast(`Booking ${DAY_NAMES[day]} ${first}–${last}…`);
-
-    const { booked, failed } = await bookRange(weekKey(), state.currentHood, day, slots, state.username);
-    booked.forEach(s => { state.bookings[`${day}_${s}`] = { name: state.username, bookedAt: new Date().toISOString() }; });
-
-    // pull authoritative state if anything clashed
-    if(failed.length){
-      state.bookings = await loadBookings(weekKey(), state.currentHood);
-    }
-    renderGrid();
-    renderDayList();
-
-    if(failed.length === 0){
-      showToast(`Booked ${booked.length} slots (${DAY_NAMES[day]} ${first}–${last}).`);
-    } else if(booked.length === 0){
-      showToast('Those slots were already taken — refreshed.');
-    } else {
-      showToast(`Booked ${booked.length}; ${failed.length} were already taken.`);
-    }
-  }
-
-  function onGridPointerLeave(){
-    // if the pointer leaves the grid entirely mid-drag, cancel the selection
-    if(drag.active){
-      drag.active = false; drag.day = null; drag.startSlot = null; drag.endSlot = null;
-      renderGrid();
     }
   }
 
@@ -929,7 +796,7 @@
   }
 
   async function refreshCurrentWeek(){
-    if(!isConfigured || state.loading || drag.active) return;
+    if(!isConfigured || state.loading) return;
     state.bookings = await loadBookings(weekKey(), state.currentHood);
     renderGrid();
     renderDayList();
@@ -957,25 +824,7 @@
   document.getElementById('thisWeek').addEventListener('click', () => goToWeek(startOfWeek(new Date())));
   document.getElementById('prevDay').addEventListener('click', () => stepDay(-1));
   document.getElementById('nextDay').addEventListener('click', () => stepDay(1));
-
-  // desktop grid: pointer events drive both drag and plain clicks
-  const gridWrap = document.getElementById('gridWrap');
-  gridWrap.addEventListener('pointerdown', onGridPointerDown);
-  gridWrap.addEventListener('pointerover', onGridPointerOver);
-  gridWrap.addEventListener('pointerup', onGridPointerUp);
-  gridWrap.addEventListener('pointerleave', onGridPointerLeave);
-  // if the mouse is released outside the grid, still finish the drag
-  window.addEventListener('pointerup', (e) => {
-    if(drag.active && !gridWrap.contains(e.target)){
-      onGridPointerLeave();
-    }
-  });
-
-  // mobile day list: plain taps only
-  document.getElementById('dayListWrap').addEventListener('click', (e) => {
-    const btn = e.target.closest('.day-row__slot');
-    if(btn) handleSlotActivate(btn);
-  });
+  document.getElementById('dayListWrap').addEventListener('click', onSlotClick);
 
   (async function init(){
     renderConfigWarning();

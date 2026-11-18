@@ -358,6 +358,84 @@
     .day-view{ display:block; }
     .toolbar .week-nav{ display:none; }
   }
+
+  /* =================================================================
+     DESIGN REFRESH — calmer grid: open slots are blank until hovered,
+     back-to-back bookings merge into one block, today is highlighted.
+     ================================================================= */
+  :root{
+    --line: #ECEEE8;
+    --line-strong: #DDE1D8;
+    --today: #F2F7F4;
+    --accent: #2F7D5B;
+  }
+  .grid-wrap{ border-radius: 10px; box-shadow: 0 1px 2px rgba(32,38,43,.04); }
+  .cell{ padding: 2px 3px; border-right-color: var(--line); border-bottom: 1px solid var(--line); }
+  .cell--half-row{ border-bottom-color: var(--line-strong); }        /* line at each full hour */
+  .cell--day{ padding: 12px 4px; border-bottom: 1px solid var(--line-strong); gap: 2px; }
+  .cell--day strong{ font-family: var(--sans); font-size: 13px; }
+  .cell--day span{ color: var(--ink-soft); font-size: 11px; }
+  .cell--day.cell--today strong{ color: var(--accent); }
+  .cell--day::after{
+    content:''; display:block; width: 18px; height: 3px; border-radius: 2px;
+    background: transparent; margin-top: 4px;
+  }
+  .cell--day.cell--today::after{ background: var(--accent); }
+  .cell--today:not(.cell--day){ background: var(--today); }
+
+  .cell--time{
+    align-items: flex-start; justify-content: flex-end;
+    padding: 4px 10px 0 4px; font-size: 11px;
+  }
+  .cell--half-row.cell--time{ color: var(--steel-dark); }
+
+  .slot{
+    margin: 0; min-height: 28px; border-radius: 6px;
+    background: transparent; color: transparent;
+    font-size: 12px; text-align: left; padding: 0 8px;
+  }
+  .slot:hover{ background: var(--free-tint); color: var(--free-strong); transform: none; }
+  .slot--past{ cursor: default; }
+  .slot--past:hover{ background: transparent; color: transparent; }
+  .cell--past:not(.cell--day){ background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(32,38,43,.025) 6px 7px); }
+
+  .slot--mine, .slot--mine:hover{ background: var(--mine-tint); color: var(--mine-strong); box-shadow: inset 3px 0 0 var(--mine-strong); }
+  .slot--mine:hover{ filter: brightness(.97); }
+  .slot--taken, .slot--taken:hover{ background: var(--taken-tint); color: var(--taken-strong); box-shadow: inset 3px 0 0 var(--taken-strong); }
+  .slot--past.slot--mine, .slot--past.slot--taken{ opacity: .55; }
+
+  /* merge consecutive slots booked by the same person */
+  .cell--join-down{ border-bottom-color: transparent !important; padding-bottom: 0; }
+  .cell--join-up{ padding-top: 0; }
+  .slot--join-down{ border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  /* paint over the 1px row line so a merged block has no seam */
+  .slot--mine.slot--join-down{ box-shadow: inset 3px 0 0 var(--mine-strong), 0 1px 0 var(--mine-tint); }
+  .slot--taken.slot--join-down{ box-shadow: inset 3px 0 0 var(--taken-strong), 0 1px 0 var(--taken-tint); }
+  .slot--join-up{ border-top-left-radius: 0; border-top-right-radius: 0; }
+
+  .swatch{ border-radius: 3px; }
+  .swatch--free{ background: var(--card); border: 1px dashed var(--steel-dark); }
+
+  /* phone list */
+  .day-list{ border-radius: 10px; border-color: var(--line-strong); }
+  .day-row{ padding: 2px 10px; border-bottom-color: var(--line); gap: 10px; }
+  .day-row--half{ border-bottom-color: var(--line-strong); }
+  .day-row__time{ width: 48px; font-size: 12px; }
+  .day-row--half .day-row__time{ color: var(--steel-dark); }
+  .day-row__slot{
+    min-height: 36px; padding: 6px 10px; border-radius: 6px;
+    background: transparent; color: var(--steel-dark); font-weight: 500;
+  }
+  .day-row__slot:active{ background: var(--free-tint); color: var(--free-strong); }
+  .day-row__slot--mine{ background: var(--mine-tint); color: var(--mine-strong); font-weight: 600; box-shadow: inset 3px 0 0 var(--mine-strong); }
+  .day-row__slot--taken{ background: var(--taken-tint); color: var(--taken-strong); font-weight: 600; box-shadow: inset 3px 0 0 var(--taken-strong); }
+  .day-row--join-down{ border-bottom-color: transparent !important; padding-bottom: 0; }
+  .day-row--join-up{ padding-top: 0; }
+  .day-row--join-down .day-row__slot{ border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .day-row--join-down .day-row__slot--mine{ box-shadow: inset 3px 0 0 var(--mine-strong), 0 1px 0 var(--mine-tint); }
+  .day-row--join-down .day-row__slot--taken{ box-shadow: inset 3px 0 0 var(--taken-strong), 0 1px 0 var(--taken-tint); }
+  .day-row--join-up .day-row__slot{ border-top-left-radius: 0; border-top-right-radius: 0; }
+  .day-row--past .day-row__slot{ opacity: .55; }
 </style>
 </head>
 <body>
@@ -512,6 +590,20 @@
     return `${f(h, m)}–${f(Math.floor(end / 60), end % 60)}`;
   }
   function slotKey(day, hour, minute){ return `${day}_${hour}_${minute}`; }
+  function startLabel(h, m){ return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0'); }
+  // Booking in the slot just before / after slot i on day d (same person = merged block)
+  function neighbour(d, i, delta){
+    const s = SLOTS[i + delta];
+    return s ? state.bookings[slotKey(d, s.hour, s.minute)] : undefined;
+  }
+  function slotIsPast(d, hour, minute){
+    const end = addDays(state.weekStart, d);
+    end.setHours(hour, minute + 30, 0, 0);
+    return end < new Date();
+  }
+  function isTodayColumn(d){
+    return fmtKeyDate(state.weekStart) === fmtKeyDate(startOfWeek(new Date())) && d === todayDayIndex();
+  }
   function weekRangeLabel(start){
     const end = addDays(start, 6);
     const opts = { day:'numeric', month:'short' };
@@ -632,7 +724,7 @@
 
     const grid = document.createElement('div');
     grid.className = 'grid';
-    grid.style.gridTemplateColumns = '100px repeat(7, 1fr)';
+    grid.style.gridTemplateColumns = '64px repeat(7, 1fr)';
 
     const corner = document.createElement('div');
     corner.className = 'cell cell--corner';
@@ -641,22 +733,32 @@
     for(let d = 0; d < 7; d++){
       const date = addDays(state.weekStart, d);
       const cell = document.createElement('div');
-      cell.className = 'cell cell--day';
+      cell.className = 'cell cell--day' + (isTodayColumn(d) ? ' cell--today' : '');
       cell.innerHTML = `<strong>${DAY_NAMES[d]}</strong><span>${date.getDate()} ${date.toLocaleDateString('en-GB',{month:'short'})}</span>`;
       grid.appendChild(cell);
     }
 
-    SLOTS.forEach(({hour, minute}) => {
+    SLOTS.forEach(({hour, minute}, i) => {
+      const rowClass = minute === 30 ? ' cell--half-row' : '';
       const timeCell = document.createElement('div');
-      timeCell.className = 'cell cell--time';
-      timeCell.textContent = slotLabel(hour, minute);
+      timeCell.className = 'cell cell--time' + rowClass;
+      timeCell.textContent = startLabel(hour, minute);
       grid.appendChild(timeCell);
 
       for(let d = 0; d < 7; d++){
         const key = slotKey(d, hour, minute);
         const entry = state.bookings[key];
+        const past = slotIsPast(d, hour, minute);
+        const prev = entry && neighbour(d, i, -1);
+        const next = entry && neighbour(d, i, +1);
+        const joinUp = !!(prev && prev.name === entry.name);
+        const joinDown = !!(next && next.name === entry.name);
         const cell = document.createElement('div');
-        cell.className = 'cell';
+        cell.className = 'cell' + rowClass
+          + (isTodayColumn(d) ? ' cell--today' : '')
+          + (past ? ' cell--past' : '')
+          + (joinUp ? ' cell--join-up' : '')
+          + (joinDown ? ' cell--join-down' : '');
 
         const btn = document.createElement('button');
         btn.type = 'button';
@@ -664,18 +766,21 @@
         btn.dataset.hour = hour;
         btn.dataset.minute = minute;
 
+        const extra = (past ? ' slot--past' : '') + (joinUp ? ' slot--join-up' : '') + (joinDown ? ' slot--join-down' : '');
+        const nameHtml = joinUp ? '' : `<span class="slot__name">${escapeHtml(entry ? entry.name : '')}</span>`;
+        const when = `${DAY_NAMES[d]} ${slotLabel(hour, minute)}`;
         if(!entry){
-          btn.className = 'slot';
-          btn.innerHTML = '<span class="slot__name">+</span>';
-          btn.title = 'Available — click to book';
+          btn.className = 'slot' + extra;
+          btn.innerHTML = past ? '' : '<span class="slot__name">+ Book</span>';
+          btn.title = past ? when : `${when} — available, click to book`;
         } else if(entry.name === state.username){
-          btn.className = 'slot slot--mine';
-          btn.innerHTML = `<span class="slot__name">${escapeHtml(entry.name)}</span>`;
-          btn.title = 'Your booking — click to release';
+          btn.className = 'slot slot--mine' + extra;
+          btn.innerHTML = nameHtml;
+          btn.title = `${when} — your booking, click to release`;
         } else {
-          btn.className = 'slot slot--taken';
-          btn.innerHTML = `<span class="slot__name">${escapeHtml(entry.name)}</span>`;
-          btn.title = `Booked by ${entry.name}`;
+          btn.className = 'slot slot--taken' + extra;
+          btn.innerHTML = nameHtml;
+          btn.title = `${when} — booked by ${entry.name}`;
         }
 
         cell.appendChild(btn);
@@ -700,16 +805,25 @@
     }
 
     wrap.innerHTML = '';
-    SLOTS.forEach(({hour, minute}) => {
-      const key = slotKey(state.currentDayIndex, hour, minute);
+    SLOTS.forEach(({hour, minute}, i) => {
+      const d = state.currentDayIndex;
+      const key = slotKey(d, hour, minute);
       const entry = state.bookings[key];
+      const prev = entry && neighbour(d, i, -1);
+      const next = entry && neighbour(d, i, +1);
+      const joinUp = !!(prev && prev.name === entry.name);
+      const joinDown = !!(next && next.name === entry.name);
 
       const row = document.createElement('div');
-      row.className = 'day-row';
+      row.className = 'day-row'
+        + (minute === 30 ? ' day-row--half' : '')
+        + (slotIsPast(d, hour, minute) ? ' day-row--past' : '')
+        + (joinUp ? ' day-row--join-up' : '')
+        + (joinDown ? ' day-row--join-down' : '');
 
       const time = document.createElement('div');
       time.className = 'day-row__time';
-      time.textContent = slotLabel(hour, minute);
+      time.textContent = startLabel(hour, minute);
       row.appendChild(time);
 
       const btn = document.createElement('button');
@@ -720,13 +834,13 @@
 
       if(!entry){
         btn.className = 'day-row__slot';
-        btn.textContent = 'Available';
+        btn.textContent = slotIsPast(d, hour, minute) ? '' : 'Available';
       } else if(entry.name === state.username){
         btn.className = 'day-row__slot day-row__slot--mine';
-        btn.textContent = `${entry.name} (yours)`;
+        btn.textContent = joinUp ? '' : `${entry.name} (yours)`;
       } else {
         btn.className = 'day-row__slot day-row__slot--taken';
-        btn.textContent = entry.name;
+        btn.textContent = joinUp ? '' : entry.name;
       }
 
       row.appendChild(btn);
@@ -801,6 +915,7 @@
 
     if(!entry){
       if(!state.username){ showToast('Set your name first to book a slot.'); return; }
+      if(slotIsPast(day, hour, minute)){ showToast('That slot is already over.'); return; }
       const result = await bookSlot(weekKey(), state.currentHood, day, hour, minute, state.username);
       if(result.ok){
         state.bookings[key] = { name: state.username, bookedAt: new Date().toISOString() };

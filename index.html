@@ -198,7 +198,7 @@
     display:flex;
     align-items:center;
     justify-content:center;
-    padding: 8px 4px;
+    padding: 2px 4px;
   }
   .cell--corner{
     position: sticky;
@@ -232,7 +232,7 @@
   .slot{
     width: 100%;
     height: 100%;
-    min-height: 44px;
+    min-height: 30px;
     border: none;
     background: var(--free-tint);
     border-radius: 3px;
@@ -429,10 +429,55 @@
     { id: 'hood-2', label: 'iPSC Hood' }
   ];
 
-  const isConfigured = !SUPABASE_URL.includes('YOUR_') && !SUPABASE_ANON_KEY.includes('YOUR_');
-  const supabase = isConfigured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+  // DEMO MODE: open the page with ?demo in the URL to test against a fake,
+  // in-browser database instead of the live Supabase. Safe to delete this
+  // block (and the DEMO lines below) once you are happy with the page.
+  const DEMO = new URLSearchParams(location.search).has('demo');
+  function makeFakeSupabase(){
+    const KEY = 'tc-hood-demo-rows';
+    const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch(e){ return null; } };
+    const save = rows => { try { localStorage.setItem(KEY, JSON.stringify(rows)); } catch(e){} };
+    let rows = load();
+    if(!rows){
+      // Seed: what an old hourly booking looks like AFTER the SQL migration
+      // (one row at :00 plus its copied :30 half).
+      const d = new Date(); const day = d.getDay(); d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day));
+      const wk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      rows = [
+        { week_start: wk, hood: 'hood-1', day_index: 0, hour: 10, minute: 0,  name: 'Old Booking', booked_at: new Date().toISOString() },
+        { week_start: wk, hood: 'hood-1', day_index: 0, hour: 10, minute: 30, name: 'Old Booking', booked_at: new Date().toISOString() }
+      ];
+      save(rows);
+    }
+    const rowKey = r => [r.week_start, r.hood, r.day_index, r.hour, r.minute].join('|');
+    function query(){
+      const filters = [];
+      let op = 'select', payload = null;
+      const q = {
+        select(){ op = 'select'; return q; },
+        delete(){ op = 'delete'; return q; },
+        insert(obj){ op = 'insert'; payload = obj; return q; },
+        eq(col, val){ filters.push(r => r[col] === val); return q; },
+        then(resolve){
+          const match = r => filters.every(f => f(r));
+          if(op === 'select') return resolve({ data: rows.filter(match), error: null });
+          if(op === 'delete'){ rows = rows.filter(r => !match(r)); save(rows); return resolve({ error: null }); }
+          const row = { minute: 0, booked_at: new Date().toISOString(), ...payload };
+          if(rows.some(r => rowKey(r) === rowKey(row))) return resolve({ error: { code: '23505' } });
+          rows.push(row); save(rows); return resolve({ error: null });
+        }
+      };
+      return q;
+    }
+    return { from: () => query() };
+  }
 
-  const HOURS = Array.from({length: 12}, (_, i) => i + 8); // 08:00 .. 19:00 start times
+  const isConfigured = DEMO || (!SUPABASE_URL.includes('YOUR_') && !SUPABASE_ANON_KEY.includes('YOUR_'));
+  const supabase = DEMO ? makeFakeSupabase()
+    : (isConfigured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null);
+
+  // 30-minute slots: 08:00, 08:30, ... 19:30 (last slot ends 20:00)
+  const SLOTS = Array.from({length: 24}, (_, i) => ({ hour: 8 + Math.floor(i / 2), minute: (i % 2) * 30 }));
   const DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const TABLE = 'tc_hood_bookings';
 
@@ -461,11 +506,12 @@
     const day = String(d.getDate()).padStart(2,'0');
     return `${y}-${m}-${day}`;
   }
-  function hourLabel(h){
-    const a = String(h).padStart(2,'0') + ':00';
-    const b = String(h+1).padStart(2,'0') + ':00';
-    return `${a}–${b}`;
+  function slotLabel(h, m){
+    const end = h * 60 + m + 30;
+    const f = (H, M) => String(H).padStart(2,'0') + ':' + String(M).padStart(2,'0');
+    return `${f(h, m)}–${f(Math.floor(end / 60), end % 60)}`;
   }
+  function slotKey(day, hour, minute){ return `${day}_${hour}_${minute}`; }
   function weekRangeLabel(start){
     const end = addDays(start, 6);
     const opts = { day:'numeric', month:'short' };
@@ -484,18 +530,18 @@
   async function loadBookings(weekStartStr, hood){
     const { data, error } = await supabase
       .from(TABLE)
-      .select('day_index, hour, name, booked_at')
+      .select('day_index, hour, minute, name, booked_at')
       .eq('week_start', weekStartStr)
       .eq('hood', hood);
     if(error){ console.error(error); showToast('Could not load the schedule.'); return {}; }
     const map = {};
-    data.forEach(row => { map[`${row.day_index}_${row.hour}`] = { name: row.name, bookedAt: row.booked_at }; });
+    data.forEach(row => { map[slotKey(row.day_index, row.hour, row.minute)] = { name: row.name, bookedAt: row.booked_at }; });
     return map;
   }
 
-  async function bookSlot(weekStartStr, hood, day, hour, name){
+  async function bookSlot(weekStartStr, hood, day, hour, minute, name){
     const { error } = await supabase.from(TABLE).insert({
-      week_start: weekStartStr, hood, day_index: day, hour, name
+      week_start: weekStartStr, hood, day_index: day, hour, minute, name
     });
     if(error){
       if(error.code === '23505') return { ok:false, reason:'taken' }; // unique constraint hit
@@ -505,9 +551,9 @@
     return { ok:true };
   }
 
-  async function cancelSlot(weekStartStr, hood, day, hour, name){
+  async function cancelSlot(weekStartStr, hood, day, hour, minute, name){
     const { error } = await supabase.from(TABLE).delete()
-      .eq('week_start', weekStartStr).eq('hood', hood).eq('day_index', day).eq('hour', hour).eq('name', name);
+      .eq('week_start', weekStartStr).eq('hood', hood).eq('day_index', day).eq('hour', hour).eq('minute', minute).eq('name', name);
     if(error){ console.error(error); return false; }
     return true;
   }
@@ -586,7 +632,7 @@
 
     const grid = document.createElement('div');
     grid.className = 'grid';
-    grid.style.gridTemplateColumns = '80px repeat(7, 1fr)';
+    grid.style.gridTemplateColumns = '100px repeat(7, 1fr)';
 
     const corner = document.createElement('div');
     corner.className = 'cell cell--corner';
@@ -600,14 +646,14 @@
       grid.appendChild(cell);
     }
 
-    HOURS.forEach(hour => {
+    SLOTS.forEach(({hour, minute}) => {
       const timeCell = document.createElement('div');
       timeCell.className = 'cell cell--time';
-      timeCell.textContent = hourLabel(hour);
+      timeCell.textContent = slotLabel(hour, minute);
       grid.appendChild(timeCell);
 
       for(let d = 0; d < 7; d++){
-        const key = `${d}_${hour}`;
+        const key = slotKey(d, hour, minute);
         const entry = state.bookings[key];
         const cell = document.createElement('div');
         cell.className = 'cell';
@@ -616,6 +662,7 @@
         btn.type = 'button';
         btn.dataset.day = d;
         btn.dataset.hour = hour;
+        btn.dataset.minute = minute;
 
         if(!entry){
           btn.className = 'slot';
@@ -638,7 +685,6 @@
 
     wrap.innerHTML = '';
     wrap.appendChild(grid);
-    wrap.addEventListener('click', onSlotClick);
   }
 
 
@@ -654,8 +700,8 @@
     }
 
     wrap.innerHTML = '';
-    HOURS.forEach(hour => {
-      const key = `${state.currentDayIndex}_${hour}`;
+    SLOTS.forEach(({hour, minute}) => {
+      const key = slotKey(state.currentDayIndex, hour, minute);
       const entry = state.bookings[key];
 
       const row = document.createElement('div');
@@ -663,13 +709,14 @@
 
       const time = document.createElement('div');
       time.className = 'day-row__time';
-      time.textContent = hourLabel(hour);
+      time.textContent = slotLabel(hour, minute);
       row.appendChild(time);
 
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.dataset.day = state.currentDayIndex;
       btn.dataset.hour = hour;
+      btn.dataset.minute = minute;
 
       if(!entry){
         btn.className = 'day-row__slot';
@@ -747,13 +794,14 @@
     if(!btn) return;
     const day = Number(btn.dataset.day);
     const hour = Number(btn.dataset.hour);
-    const key = `${day}_${hour}`;
+    const minute = Number(btn.dataset.minute);
+    const key = slotKey(day, hour, minute);
     const entry = state.bookings[key];
-    const label = `${DAY_NAMES[day]} ${hourLabel(hour)}`;
+    const label = `${DAY_NAMES[day]} ${slotLabel(hour, minute)}`;
 
     if(!entry){
       if(!state.username){ showToast('Set your name first to book a slot.'); return; }
-      const result = await bookSlot(weekKey(), state.currentHood, day, hour, state.username);
+      const result = await bookSlot(weekKey(), state.currentHood, day, hour, minute, state.username);
       if(result.ok){
         state.bookings[key] = { name: state.username, bookedAt: new Date().toISOString() };
         renderGrid();
@@ -770,7 +818,7 @@
     } else if(entry.name === state.username){
       const sure = window.confirm(`Release your booking for ${label}?`);
       if(!sure) return;
-      const ok = await cancelSlot(weekKey(), state.currentHood, day, hour, state.username);
+      const ok = await cancelSlot(weekKey(), state.currentHood, day, hour, minute, state.username);
       if(ok){
         delete state.bookings[key];
         renderGrid();
@@ -826,6 +874,7 @@
   document.getElementById('prevDay').addEventListener('click', () => stepDay(-1));
   document.getElementById('nextDay').addEventListener('click', () => stepDay(1));
   document.getElementById('dayListWrap').addEventListener('click', onSlotClick);
+  document.getElementById('gridWrap').addEventListener('click', onSlotClick);
 
   (async function init(){
     renderConfigWarning();
